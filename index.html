@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>P29-23_13.geojson 地図表示</title>
+  <title>P29-23_13.geojson 学校種別マップ</title>
 
   <!-- Leaflet の CSS -->
   <link
@@ -39,9 +39,52 @@
       font-size: 0.9rem;
       color: #555;
     }
+
+    /* 種別選択 UI */
+    .controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 8px 10px;
+      border-radius: 6px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      max-height: 80vh;
+      overflow-y: auto;
+      font-size: 13px;
+    }
+    .controls h2 {
+      font-size: 14px;
+      margin: 0 0 6px;
+    }
+    .type-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 3px;
+      gap: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .type-color-box {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      border: 1px solid #ccc;
+      flex-shrink: 0;
+    }
+    .type-label-text {
+      flex: 1;
+    }
   </style>
 </head>
 <body>
+  <!-- 種別コード選択パネル -->
+  <div class="controls">
+    <h2>表示する種別</h2>
+    <div id="type-filters"></div>
+  </div>
+
   <div id="map"></div>
 
   <!-- Leaflet の JS -->
@@ -52,7 +95,7 @@
   ></script>
 
   <script>
-    // 学校種別コード → 名称のマッピング
+    // 学校種別コード → 名称のマッピング（コード表をそのまま使用）
     const schoolTypeMap = {
       "16001": "小学校",
       "16002": "中学校",
@@ -69,6 +112,26 @@
       "16016": "専修学校"
     };
 
+    // 種別コードごとのマーカー色
+    const typeColorMap = {
+      "16001": "#e41a1c", // 小学校
+      "16002": "#377eb8", // 中学校
+      "16003": "#4daf4a", // 中等教育学校
+      "16004": "#984ea3", // 高等学校
+      "16005": "#ff7f00", // 高等専門学校
+      "16006": "#ffff33", // 短期大学
+      "16007": "#a65628", // 大学
+      "16011": "#f781bf", // 幼稚園
+      "16012": "#999999", // 特別支援学校
+      "16013": "#1b9e77", // 幼保連携型認定こども園
+      "16014": "#d95f02", // 義務教育学校
+      "16015": "#7570b3", // 各種学校
+      "16016": "#e7298a"  // 専修学校
+    };
+
+    // 選択中の種別コード（最初はすべて選択）
+    const selectedTypes = new Set(Object.keys(schoolTypeMap));
+
     // 地図を初期化（日本付近をざっくり表示）
     const map = L.map("map").setView([36.0, 138.0], 5);
 
@@ -77,6 +140,110 @@
       maxZoom: 19,
       attribution: "&copy; OpenStreetMap contributors"
     }).addTo(map);
+
+    let geojsonData = null;
+    let geojsonLayer = null;
+    let hasFittedBounds = false;
+
+    // 種別フィルタ UI を作成
+    function buildTypeFilters() {
+      const container = document.getElementById("type-filters");
+      container.innerHTML = "";
+
+      Object.entries(schoolTypeMap).forEach(([code, label]) => {
+        const id = "type_" + code;
+
+        const wrapper = document.createElement("label");
+        wrapper.className = "type-item";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.id = id;
+        checkbox.checked = true;
+
+        const colorBox = document.createElement("span");
+        colorBox.className = "type-color-box";
+        colorBox.style.backgroundColor = typeColorMap[code] || "#3388ff";
+
+        const text = document.createElement("span");
+        text.className = "type-label-text";
+        text.textContent = `${label} (${code})`;
+
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) {
+            selectedTypes.add(code);
+          } else {
+            selectedTypes.delete(code);
+          }
+          updateLayer();
+        });
+
+        wrapper.appendChild(checkbox);
+        wrapper.appendChild(colorBox);
+        wrapper.appendChild(text);
+        container.appendChild(wrapper);
+      });
+    }
+
+    // GeoJSON レイヤーを更新（フィルタ・色変更を反映）
+    function updateLayer() {
+      if (!geojsonData) return;
+
+      if (geojsonLayer) {
+        map.removeLayer(geojsonLayer);
+      }
+
+      geojsonLayer = L.geoJSON(geojsonData, {
+        filter: function (feature) {
+          const p = feature.properties || {};
+          const code = p.P29_003 != null ? String(p.P29_003) : "";
+          // 種別コードが選択されているものだけ表示
+          return selectedTypes.has(code);
+        },
+        pointToLayer: function (feature, latlng) {
+          const p = feature.properties || {};
+          const code = p.P29_003 != null ? String(p.P29_003) : "";
+          const color = typeColorMap[code] || "#3388ff";
+
+          return L.circleMarker(latlng, {
+            radius: 5,
+            weight: 1,
+            color: color,
+            fillColor: color,
+            opacity: 1,
+            fillOpacity: 0.8
+          });
+        },
+        onEachFeature: function (feature, layer) {
+          const p = feature.properties || {};
+
+          // コード表から種別名に変換
+          const code = p.P29_003 != null ? String(p.P29_003) : "";
+          const typeName = schoolTypeMap[code] || (code ? "種別コード: " + code : "種別不明");
+
+          const name = p.P29_004 || "名称不明";
+          const address = p.P29_005 || "";
+
+          let popupHtml = "";
+          popupHtml += `<span class="facility-name">${name}</span>`;
+          popupHtml += `<div class="facility-type">種別：${typeName}</div>`;
+          if (address) {
+            popupHtml += `<div class="facility-address">住所：${address}</div>`;
+          }
+
+          layer.bindPopup(popupHtml);
+        }
+      }).addTo(map);
+
+      // 初回のみ、全ポイントが収まるように地図範囲を調整
+      if (!hasFittedBounds) {
+        const bounds = geojsonLayer.getBounds();
+        if (bounds.isValid()) {
+          map.fitBounds(bounds);
+        }
+        hasFittedBounds = true;
+      }
+    }
 
     // GeoJSON ファイルを読み込み（同じフォルダに P29-23_13.geojson がある前提）
     fetch("P29-23_13.geojson")
@@ -87,42 +254,9 @@
         return response.json();
       })
       .then(data => {
-        // GeoJSON レイヤーを作成
-        const geojsonLayer = L.geoJSON(data, {
-          pointToLayer: function (feature, latlng) {
-            // マーカーのスタイル（小さな円）
-            return L.circleMarker(latlng, {
-              radius: 5,
-              weight: 1,
-              opacity: 1,
-              fillOpacity: 0.8
-            });
-          },
-          onEachFeature: function (feature, layer) {
-            const p = feature.properties || {};
-
-            const code = (p.P29_003 != null) ? String(p.P29_003) : "";
-            const typeName = schoolTypeMap[code] || (code ? "種別コード: " + code : "種別不明");
-
-            const name = p.P29_004 || "名称不明";
-            const address = p.P29_005 || "";
-
-            let popupHtml = "";
-            popupHtml += `<span class="facility-name">${name}</span>`;
-            popupHtml += `<div class="facility-type">種別：${typeName}</div>`;
-            if (address) {
-              popupHtml += `<div class="facility-address">住所：${address}</div>`;
-            }
-
-            layer.bindPopup(popupHtml);
-          }
-        }).addTo(map);
-
-        // すべてのポイントが収まるように地図範囲を調整
-        const bounds = geojsonLayer.getBounds();
-        if (bounds.isValid()) {
-          map.fitBounds(bounds);
-        }
+        geojsonData = data;
+        buildTypeFilters(); // フィルタ UI を作成
+        updateLayer();      // 初回レイヤー描画
       })
       .catch(error => {
         console.error(error);
